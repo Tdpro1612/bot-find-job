@@ -7,7 +7,7 @@
 | Tên tham số | Kiểu | Mô tả |
 |---|---|---|
 | `cv_text` | `str` | Nội dung thuần text trích xuất từ file CV (PDF/TXT/MD) |
-| `github_data` | `List[Dict]` | Danh sách repo gần nhất từ `GitHubLoader`, mỗi item gồm: `name`, `languages`, `root_files`, `recent_commits`, `readme_preview` |
+| `github_data` | `List[Dict]` | Danh sách repo tâm đắc do người dùng tick chọn (1–5 repos từ 10 repos gần nhất), mỗi item gồm: `name`, `languages`, `root_files`, `recent_commits`, `readme_preview` |
 
 ## Output — `DeveloperProfile` (Pydantic Model)
 | Trường | Kiểu | Mô tả |

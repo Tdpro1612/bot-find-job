@@ -100,9 +100,32 @@ def main():
                 github_data = []
 
     # 3. Phân tích năng lực (Agent 1)
-    with console.status("[cyan]Agent 1 đang đánh giá năng lực thực tế từ CV và Code...[/cyan]"):
-        evaluator = ProfileEvaluatorAgent()
-        profile = evaluator.evaluate(cv_text, github_data)
+    profile_cache = Path("data/output/developer_profile.json")
+    profile = None
+
+    if profile_cache.exists():
+        console.print(f"\n[green]💾 Tìm thấy hồ sơ năng lực đã lưu tại:[/green] {profile_cache}")
+        use_saved = input("Bạn có muốn sử dụng lại hồ sơ này không? (y/n, Mặc định: y): ").strip().lower()
+        if use_saved != "n":
+            try:
+                import json
+                with open(profile_cache, "r", encoding="utf-8") as f:
+                    profile = DeveloperProfile(**json.load(f))
+                console.print("[green]✓ Đã tải hồ sơ năng lực thành công![/green]")
+            except Exception as e:
+                console.print(f"[yellow]Không đọc được file cache: {e}. Sẽ tiến hành phân tích lại.[/yellow]")
+                profile = None
+
+    if not profile:
+        with console.status("[cyan]Agent 1 đang đánh giá năng lực thực tế từ CV và Code...[/cyan]"):
+            evaluator = ProfileEvaluatorAgent()
+            profile = evaluator.evaluate(cv_text, github_data)
+            
+            # Lưu lại file JSON
+            profile_cache.parent.mkdir(parents=True, exist_ok=True)
+            with open(profile_cache, "w", encoding="utf-8") as f:
+                f.write(profile.model_dump_json(indent=2))
+            console.print(f"[green]✓ Đã lưu hồ sơ năng lực vào {profile_cache}![/green]")
 
     console.print(Panel(
         f"[bold]Họ tên:[/bold] {profile.name} | [bold]Kinh nghiệm:[/bold] {profile.years_of_experience}\n"
@@ -117,13 +140,23 @@ def main():
     ))
 
     # 4. Tìm kiếm việc làm (Agent 2)
-    default_role = profile.target_roles[0] if profile.target_roles else "Software Engineer"
-    search_role = input(f"\nNhập từ khóa tìm việc (Mặc định: '{default_role}'): ").strip() or default_role
-    search_location = input("Nhập địa điểm (Mặc định: 'Vietnam' - có thể gõ 'Remote' hoặc 'Hanoi'): ").strip() or "Vietnam"
+    roles_str = " OR ".join([f'"{r}"' for r in profile.target_roles]) if profile.target_roles else "Software Engineer"
+    console.print(f"\n[cyan]Các vị trí từ Agent 1 đề xuất:[/cyan] {', '.join(profile.target_roles)}")
+    search_role = input(f"Nhập từ khóa tìm việc (Mặc định kết hợp tất cả: {roles_str}): ").strip() or roles_str
+    search_location = input("Nhập địa điểm (Mặc định: 'Vietnam' - có thể gõ 'Remote' hoặc 'Da Nang'): ").strip() or "Vietnam"
+    remote_choice = input("Bạn có muốn tìm kiếm cả việc làm Remote quốc tế không? (y/n, Mặc định: y): ").strip().lower()
+    allow_remote_cli = False if remote_choice == "n" else True
 
-    with console.status(f"[cyan]Agent 2 đang săn tin tuyển dụng '{search_role}' ({search_location})...[/cyan]"):
+    with console.status(f"[cyan]Agent 2 đang săn tin tuyển dụng mới nhất (Remote: {allow_remote_cli}) và thẩm định rủi ro công ty...[/cyan]"):
         scout = JobScoutAgent()
-        raw_jobs = scout.search_jobs(keywords=search_role, location=search_location, limit=8)
+        raw_jobs = scout.search_jobs(
+            keywords=search_role,
+            location=search_location,
+            limit=8,
+            timelimit="m",
+            allow_remote=allow_remote_cli,
+            check_reputation=True
+        )
 
     if not raw_jobs:
         console.print("[yellow]Không tìm thấy job tự động. Bạn có thể tự dán JD bên dưới.[/yellow]")
@@ -138,12 +171,15 @@ def main():
         table.add_column("STT", style="bold yellow", width=4)
         table.add_column("Match %", style="bold green", width=8)
         table.add_column("Tiêu đề & Công ty", style="white")
-        table.add_column("Đánh giá nhanh", style="dim")
+        table.add_column("Cảnh báo / Đánh giá", style="yellow")
         table.add_column("Link", style="blue")
 
         for idx, j in enumerate(ranked_jobs, 1):
             match_str = f"{j.match_score}%" if j.match_score else "N/A"
-            reasons = j.recommendation_reason or (j.pros[0] if j.pros else "")
+            reasons = ""
+            if j.company_warning:
+                reasons = f"[bold red]⚠️ {j.company_warning}[/bold red]\n"
+            reasons += j.recommendation_reason or (j.pros[0] if j.pros else "")
             table.add_row(str(idx), match_str, f"{j.title}\n[dim]{j.company}[/dim]", reasons, j.url)
 
         console.print(table)

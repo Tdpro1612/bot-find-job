@@ -25,6 +25,9 @@ class JobListing(BaseModel):
     salary: Optional[str] = "Thoả thuận"
     jd_text: str
     url: str = ""
+    posted_date: Optional[str] = ""
+    company_warning: Optional[str] = Field(default="", description="Cảnh báo rủi ro về công ty (phốt, công ty ma, địa chỉ ảo)")
+    company_reputation_score: Optional[int] = Field(default=100, description="Điểm uy tín công ty (0-100)")
     match_score: Optional[int] = 0
     pros: List[str] = Field(default_factory=list)
     cons: List[str] = Field(default_factory=list)

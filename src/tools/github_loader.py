@@ -30,9 +30,10 @@ class GitHubLoader:
             return clean.split("/")[-1]
         return clean
 
-    def get_user_recent_repos(self, username_or_url: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def get_user_recent_repos_summary(self, username_or_url: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
-        Lấy danh sách các repo được cập nhật/push gần nhất của user.
+        Lấy danh sách tóm tắt nhanh của các repo gần nhất (để người dùng lựa chọn trên UI).
+        Không fetch deep-dive từng repo để tránh tốn thời gian và rate limit.
         """
         username = self.extract_username(username_or_url)
         url = f"https://api.github.com/users/{username}/repos?sort=pushed&direction=desc&per_page={limit * 2}"
@@ -44,7 +45,47 @@ class GitHubLoader:
         resp.raise_for_status()
 
         repos = resp.json()
-        # Ưu tiên repo chính chủ (không phải fork) trước
+        own_repos = [r for r in repos if not r.get("fork")]
+        selected = own_repos[:limit] if own_repos else repos[:limit]
+
+        summaries = []
+        for r in selected:
+            summaries.append({
+                "name": r["name"],
+                "owner": r["owner"]["login"],
+                "description": r.get("description") or "Không có mô tả",
+                "language": r.get("language") or "N/A",
+                "stars": r.get("stargazers_count", 0),
+                "forks": r.get("forks_count", 0),
+                "updated_at": r.get("pushed_at", "")[:10],
+                "url": r.get("html_url", f"https://github.com/{r['owner']['login']}/{r['name']}")
+            })
+        return summaries
+
+    def get_selected_repos_deep_dive(self, owner: str, repo_names: List[str]) -> List[Dict[str, Any]]:
+        """
+        Lấy chi tiết sâu (deep dive) cho danh sách các repo mà người dùng đã tick chọn.
+        """
+        detailed_repos = []
+        for repo_name in repo_names:
+            detail = self.get_repo_deep_dive(owner, repo_name)
+            detailed_repos.append(detail)
+        return detailed_repos
+
+    def get_user_recent_repos(self, username_or_url: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """
+        Lấy danh sách các repo được cập nhật/push gần nhất của user (mặc định lấy limit repo).
+        """
+        username = self.extract_username(username_or_url)
+        url = f"https://api.github.com/users/{username}/repos?sort=pushed&direction=desc&per_page={limit * 2}"
+        resp = requests.get(url, headers=self.headers, timeout=15)
+        if resp.status_code == 404:
+            raise ValueError(f"Không tìm thấy GitHub user: {username}")
+        if resp.status_code == 403:
+            raise PermissionError("Bị chạm giới hạn Rate Limit của GitHub API. Hãy thêm GITHUB_TOKEN vào .env")
+        resp.raise_for_status()
+
+        repos = resp.json()
         own_repos = [r for r in repos if not r.get("fork")]
         selected = own_repos[:limit] if own_repos else repos[:limit]
 

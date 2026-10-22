@@ -33,7 +33,7 @@ Nhiệm vụ của bạn: Dựa trên thông tin ứng viên và bản mô tả 
 TIÊU CHÍ QUAN TRỌNG:
 1. Thân thiện với hệ thống lọc tự động (ATS-Friendly): Tự nhiên lồng ghép các từ khóa kỹ thuật có trong JD.
 2. Dùng công thức STAR / Google XYZ ("Accomplished [X] as measured by [Y], by doing [Z]").
-3. Khai thác tối đa các dự án thực tế trên GitHub của ứng viên để làm bằng chứng thuyết phục.
+3. Khai thác tối đa các dự án thực tế trên GitHub được liệt kê trong danh sách `projects` của profile làm bằng chứng thuyết phục hàng đầu. Đây là những dự án tâm đắc nhất của ứng viên, hãy đưa chi tiết về kiến trúc, tính năng, và tech stack vào phần Projects / Work Experience.
 4. KHÔNG BỊA ĐẶT KINH NGHIỆM: Chỉ làm nổi bật các kỹ năng và dự án mà ứng viên thực sự có hoặc có nền tảng vững chắc.
 5. Định dạng Markdown chuyên nghiệp, rõ ràng, sẵn sàng để convert sang PDF.
 

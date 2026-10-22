@@ -43,8 +43,6 @@ with st.sidebar:
         help="Bot sẽ quét các repo gần nhất để đánh giá năng lực thực tế của bạn",
     )
 
-    num_repos = st.slider("Số repo GitHub cần phân tích", 1, 6, 3)
-
     st.divider()
     st.markdown("### 🔗 Links hữu ích")
     st.markdown("- [Lấy Gemini Key miễn phí](https://aistudio.google.com/app/apikey)")
@@ -115,38 +113,121 @@ if cv_text:
         st.text(cv_text[:2000] + ("..." if len(cv_text) > 2000 else ""))
 
 # ── STEP 2: Phân tích năng lực ─────────────────────────────────────────────────
-st.header("Bước 2 — Phân tích năng lực")
+st.header("Bước 2 — Chọn Repository GitHub & Phân tích năng lực")
 
 if not cv_text:
     st.info("↑ Hãy upload CV trước để tiếp tục.")
     st.stop()
 
+profile_cache_path = Path("data/output/developer_profile.json")
+
 if "profile" not in st.session_state:
     st.session_state.profile = None
+    # Tự động tải từ file JSON đã lưu nếu có
+    if profile_cache_path.exists():
+        try:
+            from src.state import DeveloperProfile
+            with open(profile_cache_path, "r", encoding="utf-8") as f:
+                saved_data = json.load(f)
+                st.session_state.profile = DeveloperProfile(**saved_data)
+        except Exception:
+            pass
+
 if "github_data" not in st.session_state:
     st.session_state.github_data = []
+if "repo_summaries" not in st.session_state:
+    st.session_state.repo_summaries = []
+if "loaded_user" not in st.session_state:
+    st.session_state.loaded_user = ""
 
-if st.button("🔍 Phân tích CV + GitHub", type="primary", use_container_width=True):
+# Thông báo nếu đã có profile từ trước
+if profile_cache_path.exists() and st.session_state.profile:
+    st.success(f"💾 Đã tự động nạp hồ sơ năng lực đã lưu từ lần trước (`{profile_cache_path}`). Bạn có thể dùng luôn hoặc bấm phân tích lại bên dưới.")
+
+# Sub-step 2.1: Tải danh sách 10 repo gần nhất
+clean_user = github_user.strip() if github_user else ""
+
+col_gh1, col_gh2 = st.columns([3, 1])
+with col_gh1:
+    st.markdown(f"**Tài khoản GitHub:** `{clean_user or 'Chưa nhập'}`")
+with col_gh2:
+    btn_fetch = st.button("🔄 Lấy 10 repo gần nhất", use_container_width=True)
+
+if btn_fetch or (clean_user and not st.session_state.repo_summaries and clean_user != st.session_state.loaded_user):
+    from src.tools.github_loader import GitHubLoader
+    if clean_user:
+        with st.spinner(f"Đang tải 10 repo gần nhất của @{clean_user}..."):
+            try:
+                loader = GitHubLoader()
+                st.session_state.repo_summaries = loader.get_user_recent_repos_summary(clean_user, limit=10)
+                st.session_state.loaded_user = clean_user
+                st.success(f"✅ Đã tìm thấy {len(st.session_state.repo_summaries)} repo gần nhất!")
+            except Exception as e:
+                st.error(f"Lỗi tải GitHub: {e}")
+                st.session_state.repo_summaries = []
+
+selected_repo_names = []
+if st.session_state.repo_summaries:
+    st.markdown("##### 📌 Chọn các repository bạn tâm đắc nhất (tối đa 5 repo để đưa vào CV):")
+    st.caption("Các repo được chọn sẽ được cào sâu chi tiết (code structure, README, commits) để đối chiếu năng lực thực tế và đưa thẳng vào CV.")
+    
+    # Hiển thị dạng bảng có checkbox
+    cols_grid = st.columns(2)
+    for idx, repo in enumerate(st.session_state.repo_summaries):
+        col_target = cols_grid[idx % 2]
+        with col_target:
+            # Mặc định tick 2-3 repo đầu tiên nếu chưa từng chọn
+            default_checked = idx < 3
+            repo_label = f"**{repo['name']}** ({repo['language']}) — ⭐ {repo['stars']}"
+            is_checked = st.checkbox(
+                repo_label,
+                value=default_checked,
+                key=f"repo_chk_{repo['name']}",
+                help=f"Mô tả: {repo['description']}\nCập nhật: {repo['updated_at']}"
+            )
+            st.caption(f"_{repo['description'][:80]}..._ [Xem repo]({repo['url']})")
+            if is_checked:
+                selected_repo_names.append(repo['name'])
+
+    if len(selected_repo_names) > 5:
+        st.warning(f"⚠️ Bạn đang chọn {len(selected_repo_names)} repo. Khuyên khích nên chọn từ 1-5 repo tiêu biểu nhất để CV tập trung và chất lượng nhất.")
+    elif len(selected_repo_names) == 0:
+        st.info("💡 Bạn chưa tick chọn repo nào. Bot sẽ phân tích chủ yếu dựa trên thông tin CV.")
+else:
+    if clean_user:
+        st.info("Nhấn nút **'Lấy 10 repo gần nhất'** ở trên để tải danh sách các dự án GitHub của bạn.")
+
+st.markdown("---")
+# Sub-step 2.2: Kích hoạt Agent 1 đánh giá
+btn_label = "🔄 Phân tích lại năng lực thực tế (Agent 1)" if st.session_state.profile else "🔍 Đánh giá năng lực thực tế (Agent 1)"
+if st.button(btn_label, type="primary", use_container_width=True):
     from src.tools.github_loader import GitHubLoader
     from src.agents.profile_evaluator import ProfileEvaluatorAgent
 
-    with st.spinner(f"Đang cào {num_repos} repo GitHub của @{github_user or 'N/A'}..."):
-        if github_user:
+    st.session_state.github_data = []
+    if clean_user and selected_repo_names:
+        with st.spinner(f"Đang đào sâu chi tiết {len(selected_repo_names)} repo tâm đắc ({', '.join(selected_repo_names[:3])}...)..."):
             try:
                 loader = GitHubLoader()
-                st.session_state.github_data = loader.get_user_recent_repos(github_user, limit=num_repos)
-                st.success(f"✅ Đã quét {len(st.session_state.github_data)} repos")
+                owner = loader.extract_username(clean_user)
+                st.session_state.github_data = loader.get_selected_repos_deep_dive(owner, selected_repo_names[:5])
+                st.success(f"✅ Đã thu thập code, commits, README của {len(st.session_state.github_data)} repo tiêu biểu!")
             except Exception as e:
-                st.warning(f"Không lấy được GitHub: {e}. Tiếp tục chỉ với CV.")
+                st.warning(f"Không lấy được chi tiết repo: {e}. Tiếp tục chỉ với CV.")
                 st.session_state.github_data = []
-        else:
-            st.session_state.github_data = []
 
-    with st.spinner("Gemini AI đang đánh giá năng lực thực tế..."):
+    with st.spinner("Gemini AI đang phân tích đối chiếu CV + Code thực tế..."):
         try:
             evaluator = ProfileEvaluatorAgent()
-            st.session_state.profile = evaluator.evaluate(cv_text, st.session_state.github_data)
-            st.success("✅ Phân tích xong!")
+            profile_obj = evaluator.evaluate(cv_text, st.session_state.github_data)
+            st.session_state.profile = profile_obj
+
+            # Tự động lưu ra file JSON để tái sử dụng
+            profile_cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(profile_cache_path, "w", encoding="utf-8") as f:
+                f.write(profile_obj.model_dump_json(indent=2))
+
+            st.success(f"✅ Đã phân tích xong và lưu kết quả vào `{profile_cache_path}`!")
         except Exception as e:
             st.error(f"Lỗi Gemini: {e}")
 
@@ -180,18 +261,47 @@ if not st.session_state.profile:
     st.stop()
 
 p = st.session_state.profile
-default_role = p.target_roles[0] if p.target_roles else "Software Engineer"
+available_roles = p.target_roles if p.target_roles else ["Software Engineer"]
 
-col1, col2, col3 = st.columns([2, 1, 1])
+col1, col2 = st.columns([3, 1])
 with col1:
-    search_keywords = st.text_input("Từ khóa tìm việc", value=default_role, placeholder="vd: NLP Engineer Python")
+    # Cho phép chọn nhiều role từ kết quả của Agent 1 hoặc tự thêm từ khóa mới
+    selected_roles = st.multiselect(
+        "Vị trí mục tiêu (Đã lấy đầy đủ từ đánh giá của Agent 1):",
+        options=available_roles,
+        default=available_roles,
+        help="Bot sẽ tìm kiếm các cơ hội việc làm kết hợp tất cả các vị trí bạn chọn."
+    )
+    custom_keywords = st.text_input(
+        "Thêm từ khóa kỹ năng / chuyên sâu (tùy chọn):",
+        placeholder="vd: LangChain, RAG, PyTorch, Multi-Agent"
+    )
 with col2:
-    search_location = st.text_input("Địa điểm", value="Vietnam", placeholder="vd: Da Nang, Remote, HCM")
-with col3:
-    num_jobs = st.slider("Số lượng job tìm", 5, 20, 8)
+    search_location = st.text_input("Địa điểm ưu tiên:", value="Vietnam", placeholder="vd: Da Nang, Remote, Vietnam")
+    allow_remote_job = st.checkbox("🌐 Cho phép tìm job Remote (Kết hợp nền tảng quốc tế)", value=True, help="Nếu bật, bot sẽ tìm kiếm trên cả We Work Remotely, RemoteOK, Wellfound, Remotive, Himalayas. Nếu tắt, chỉ tìm Onsite/Hybrid tại địa điểm đã chọn.")
+    timelimit_option = st.selectbox(
+        "Độ mới của tin:",
+        options=["m", "w", "d", ""],
+        format_func=lambda x: {
+            "m": "1 tháng qua (Tránh hết hạn)",
+            "w": "1 tuần qua (Mới nhất)",
+            "d": "24 giờ qua",
+            "": "Tất cả thời gian"
+        }.get(x, x),
+        index=0
+    )
+
+# Ghép các keywords thành query hoàn chỉnh
+search_keywords_list = list(selected_roles)
+if custom_keywords.strip():
+    search_keywords_list.append(custom_keywords.strip())
+final_search_query = " OR ".join([f'"{r}"' for r in search_keywords_list]) if search_keywords_list else "IT Software Engineer"
+
+num_jobs = st.slider("Số lượng job tìm tối đa:", 5, 25, 10)
+check_company_risk = st.checkbox("🛡️ Tự động quét & cảnh báo rủi ro công ty (phốt, công ty ma, nợ lương, địa chỉ ảo)", value=True)
 
 # Khu vực tìm job tự động HOẶC paste JD thủ công
-tab_auto, tab_manual = st.tabs(["🔎 Tìm tự động", "📋 Paste JD thủ công"])
+tab_auto, tab_manual = st.tabs(["🔎 Tìm tự động (Đa nguồn)", "📋 Paste JD thủ công"])
 
 if "ranked_jobs" not in st.session_state:
     st.session_state.ranked_jobs = []
@@ -199,24 +309,32 @@ if "selected_job" not in st.session_state:
     st.session_state.selected_job = None
 
 with tab_auto:
-    if st.button("🚀 Tìm & Chấm điểm Job", type="primary", use_container_width=True):
+    if st.button("🚀 Tìm kiếm & Thẩm định Job", type="primary", use_container_width=True):
         from src.agents.job_scout import JobScoutAgent
         from src.agents.job_matcher import JobMatcherAgent
 
-        with st.spinner("Agent 2 đang săn tin tuyển dụng..."):
+        remote_msg = " + Remote quốc tế" if allow_remote_job else " (Chỉ Onsite/Địa phương)"
+        with st.spinner(f"Agent 2 đang săn tin tuyển dụng mới nhất ({timelimit_option or 'mọi lúc'}) từ các nguồn uy tín{remote_msg}..."):
             try:
                 scout = JobScoutAgent()
-                raw_jobs = scout.search_jobs(keywords=search_keywords, location=search_location, limit=num_jobs)
+                raw_jobs = scout.search_jobs(
+                    keywords=final_search_query,
+                    location=search_location,
+                    limit=num_jobs,
+                    timelimit=timelimit_option or None,
+                    allow_remote=allow_remote_job,
+                    check_reputation=check_company_risk
+                )
                 if raw_jobs:
-                    st.success(f"✅ Tìm được {len(raw_jobs)} tin tuyển dụng")
+                    st.success(f"✅ Tìm được {len(raw_jobs)} tin tuyển dụng mới và hợp lệ!")
                 else:
-                    st.warning("Không tìm được job tự động. Thử tab 'Paste JD thủ công'.")
+                    st.warning("Chưa tìm thấy job mới trong khung thời gian này. Hãy thử chuyển sang 'Tất cả thời gian' hoặc tab 'Paste JD thủ công'.")
             except Exception as e:
                 st.error(f"Lỗi tìm kiếm: {e}")
                 raw_jobs = []
 
         if raw_jobs:
-            with st.spinner("Agent 3 đang chấm điểm độ phù hợp..."):
+            with st.spinner("Agent 3 đang chấm điểm mức độ phù hợp và lợi thế cạnh tranh của bạn..."):
                 try:
                     matcher = JobMatcherAgent()
                     st.session_state.ranked_jobs = matcher.match_and_rank(p, raw_jobs)
@@ -225,13 +343,23 @@ with tab_auto:
                     st.session_state.ranked_jobs = raw_jobs
 
     if st.session_state.ranked_jobs:
-        st.subheader("📊 Danh sách Job phù hợp nhất")
+        st.subheader("📊 Danh sách Job phù hợp nhất (Đã rà soát rủi ro)")
         for i, job in enumerate(st.session_state.ranked_jobs):
             score = job.match_score or 0
             color = "🟢" if score >= 70 else "🟡" if score >= 50 else "🔴"
-            with st.expander(f"{color} [{score}%] {job.title} — {job.company}"):
+            
+            # Tiêu đề hiển thị có cảnh báo nếu công ty bị phốt
+            warning_badge = " ⚠️ [CẢNH BÁO RỦI RO]" if job.company_warning else ""
+            expander_title = f"{color} [{score}% Match]{warning_badge} {job.title} — {job.company}"
+            
+            with st.expander(expander_title):
                 col1, col2 = st.columns([3, 1])
                 with col1:
+                    if job.company_warning:
+                        st.error(f"🚨 **CẢNH BÁO THẨM ĐỊNH CÔNG TY:**\n{job.company_warning}")
+                    
+                    st.markdown(f"**Thời gian tin:** `{job.posted_date or 'Mới'}` | **Địa điểm:** `{job.location}`")
+                    
                     if job.pros:
                         st.markdown("**✅ Điểm mạnh khớp JD:**")
                         for pro in job.pros:
@@ -243,9 +371,9 @@ with tab_auto:
                     if job.recommendation_reason:
                         st.info(f"💡 {job.recommendation_reason}")
                     if job.url:
-                        st.markdown(f"🔗 [Xem tin tuyển dụng]({job.url})")
+                        st.markdown(f"🔗 [Xem tin tuyển dụng gốc]({job.url})")
                 with col2:
-                    if st.button(f"✏️ Apply job này", key=f"select_{i}"):
+                    if st.button(f"✏️ Chọn Job này", key=f"select_{i}"):
                         st.session_state.selected_job = job
                         st.rerun()
 

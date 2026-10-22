@@ -25,23 +25,24 @@ class ProfileEvaluatorAgent:
 
     def evaluate(self, cv_text: str, github_data: List[Dict[str, Any]]) -> DeveloperProfile:
         """
-        Đánh giá toàn diện năng lực dựa trên CV và các repository GitHub gần nhất.
+        Đánh giá toàn diện năng lực dựa trên CV và các repository GitHub được chọn.
         """
         prompt = f"""
 Bạn là một chuyên gia tuyển dụng kỹ thuật (Tech Recruiter & Senior Tech Lead) hàng đầu.
 Nhiệm vụ của bạn là đánh giá năng lực thực tế của lập trình viên bằng cách đối chiếu giữa:
 1. CV cũ của ứng viên.
-2. Dữ liệu thực tế từ các GitHub Repositories gần nhất (ngôn ngữ, README, file cấu trúc, commit messages).
+2. Dữ liệu thực tế từ các GitHub Repositories được ứng viên lựa chọn là tâm đắc/tiêu biểu nhất (ngôn ngữ, README, file cấu trúc, commit messages).
 
 Mục tiêu:
-- Tìm ra những thế mạnh ĐÃ ĐƯỢC CHỨNG MINH bằng code thực tế (không chỉ là chém gió trên CV).
+- Tìm ra những thế mạnh ĐÃ ĐƯỢC CHỨNG MINH bằng code thực tế (đặc biệt nhấn mạnh các repo tiêu biểu mà ứng viên chọn).
 - Phát hiện những lỗ hổng kỹ năng (gaps) mà thị trường tuyển dụng hiện nay hay đòi hỏi.
 - Đề xuất các vị trí công việc (Target Roles) mà ứng viên có cơ hội trúng tuyển cao nhất.
+- Trích xuất thông tin các dự án tiêu biểu từ GitHub để làm tư liệu trực tiếp may đo CV sau này.
 
 DỮ LIỆU CV:
 {cv_text}
 
-DỮ LIỆU GITHUB REPOSITORIES GẦN ĐÂY:
+DỮ LIỆU GITHUB REPOSITORIES TIÊU BIỂU ĐÃ CHỌN:
 {json.dumps(github_data, ensure_ascii=False, indent=2)}
 
 YÊU CẦU OUTPUT:
