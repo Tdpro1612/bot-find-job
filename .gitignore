@@ -1,0 +1,23 @@
+# Environment & Secrets
+.env
+*.env
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Data & Output
+data/output/*
+!data/output/.gitkeep
+data/input/*
+!data/input/.gitkeep
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+
