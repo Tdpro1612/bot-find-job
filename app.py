@@ -4,6 +4,7 @@ Chạy bằng lệnh: streamlit run app.py
 """
 import sys
 import os
+import json
 import warnings
 import tempfile
 warnings.filterwarnings("ignore")
@@ -113,25 +114,27 @@ if cv_text:
         st.text(cv_text[:2000] + ("..." if len(cv_text) > 2000 else ""))
 
 # ── STEP 2: Phân tích năng lực ─────────────────────────────────────────────────
-st.header("Bước 2 — Chọn Repository GitHub & Phân tích năng lực")
+st.header("Bước 2 — Hồ sơ năng lực (Developer Profile)")
 
 if not cv_text:
     st.info("↑ Hãy upload CV trước để tiếp tục.")
     st.stop()
 
-profile_cache_path = Path("data/output/developer_profile.json")
+# Đảm bảo đường dẫn tuyệt đối chính xác
+BASE_DIR = Path(__file__).resolve().parent
+profile_cache_path = BASE_DIR / "data" / "output" / "developer_profile.json"
 
-if "profile" not in st.session_state:
+# Luôn thử nạp từ file JSON nếu session_state đang None hoặc chưa có
+if "profile" not in st.session_state or st.session_state.profile is None:
     st.session_state.profile = None
-    # Tự động tải từ file JSON đã lưu nếu có
     if profile_cache_path.exists():
         try:
             from src.state import DeveloperProfile
             with open(profile_cache_path, "r", encoding="utf-8") as f:
                 saved_data = json.load(f)
                 st.session_state.profile = DeveloperProfile(**saved_data)
-        except Exception:
-            pass
+        except Exception as e:
+            st.warning(f"Không thể đọc file cache: {e}")
 
 if "github_data" not in st.session_state:
     st.session_state.github_data = []
@@ -140,118 +143,177 @@ if "repo_summaries" not in st.session_state:
 if "loaded_user" not in st.session_state:
     st.session_state.loaded_user = ""
 
-# Thông báo nếu đã có profile từ trước
-if profile_cache_path.exists() and st.session_state.profile:
-    st.success(f"💾 Đã tự động nạp hồ sơ năng lực đã lưu từ lần trước (`{profile_cache_path}`). Bạn có thể dùng luôn hoặc bấm phân tích lại bên dưới.")
-
-# Sub-step 2.1: Tải danh sách 10 repo gần nhất
-clean_user = github_user.strip() if github_user else ""
-
-col_gh1, col_gh2 = st.columns([3, 1])
-with col_gh1:
-    st.markdown(f"**Tài khoản GitHub:** `{clean_user or 'Chưa nhập'}`")
-with col_gh2:
-    btn_fetch = st.button("🔄 Lấy 10 repo gần nhất", use_container_width=True)
-
-if btn_fetch or (clean_user and not st.session_state.repo_summaries and clean_user != st.session_state.loaded_user):
-    from src.tools.github_loader import GitHubLoader
-    if clean_user:
-        with st.spinner(f"Đang tải 10 repo gần nhất của @{clean_user}..."):
-            try:
-                loader = GitHubLoader()
-                st.session_state.repo_summaries = loader.get_user_recent_repos_summary(clean_user, limit=10)
-                st.session_state.loaded_user = clean_user
-                st.success(f"✅ Đã tìm thấy {len(st.session_state.repo_summaries)} repo gần nhất!")
-            except Exception as e:
-                st.error(f"Lỗi tải GitHub: {e}")
-                st.session_state.repo_summaries = []
-
-selected_repo_names = []
-if st.session_state.repo_summaries:
-    st.markdown("##### 📌 Chọn các repository bạn tâm đắc nhất (tối đa 5 repo để đưa vào CV):")
-    st.caption("Các repo được chọn sẽ được cào sâu chi tiết (code structure, README, commits) để đối chiếu năng lực thực tế và đưa thẳng vào CV.")
-    
-    # Hiển thị dạng bảng có checkbox
-    cols_grid = st.columns(2)
-    for idx, repo in enumerate(st.session_state.repo_summaries):
-        col_target = cols_grid[idx % 2]
-        with col_target:
-            # Mặc định tick 2-3 repo đầu tiên nếu chưa từng chọn
-            default_checked = idx < 3
-            repo_label = f"**{repo['name']}** ({repo['language']}) — ⭐ {repo['stars']}"
-            is_checked = st.checkbox(
-                repo_label,
-                value=default_checked,
-                key=f"repo_chk_{repo['name']}",
-                help=f"Mô tả: {repo['description']}\nCập nhật: {repo['updated_at']}"
-            )
-            st.caption(f"_{repo['description'][:80]}..._ [Xem repo]({repo['url']})")
-            if is_checked:
-                selected_repo_names.append(repo['name'])
-
-    if len(selected_repo_names) > 5:
-        st.warning(f"⚠️ Bạn đang chọn {len(selected_repo_names)} repo. Khuyên khích nên chọn từ 1-5 repo tiêu biểu nhất để CV tập trung và chất lượng nhất.")
-    elif len(selected_repo_names) == 0:
-        st.info("💡 Bạn chưa tick chọn repo nào. Bot sẽ phân tích chủ yếu dựa trên thông tin CV.")
-else:
-    if clean_user:
-        st.info("Nhấn nút **'Lấy 10 repo gần nhất'** ở trên để tải danh sách các dự án GitHub của bạn.")
-
-st.markdown("---")
-# Sub-step 2.2: Kích hoạt Agent 1 đánh giá
-btn_label = "🔄 Phân tích lại năng lực thực tế (Agent 1)" if st.session_state.profile else "🔍 Đánh giá năng lực thực tế (Agent 1)"
-if st.button(btn_label, type="primary", use_container_width=True):
-    from src.tools.github_loader import GitHubLoader
-    from src.agents.profile_evaluator import ProfileEvaluatorAgent
-
-    st.session_state.github_data = []
-    if clean_user and selected_repo_names:
-        with st.spinner(f"Đang đào sâu chi tiết {len(selected_repo_names)} repo tâm đắc ({', '.join(selected_repo_names[:3])}...)..."):
-            try:
-                loader = GitHubLoader()
-                owner = loader.extract_username(clean_user)
-                st.session_state.github_data = loader.get_selected_repos_deep_dive(owner, selected_repo_names[:5])
-                st.success(f"✅ Đã thu thập code, commits, README của {len(st.session_state.github_data)} repo tiêu biểu!")
-            except Exception as e:
-                st.warning(f"Không lấy được chi tiết repo: {e}. Tiếp tục chỉ với CV.")
-                st.session_state.github_data = []
-
-    with st.spinner("Gemini AI đang phân tích đối chiếu CV + Code thực tế..."):
-        try:
-            evaluator = ProfileEvaluatorAgent()
-            profile_obj = evaluator.evaluate(cv_text, st.session_state.github_data)
-            st.session_state.profile = profile_obj
-
-            # Tự động lưu ra file JSON để tái sử dụng
-            profile_cache_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(profile_cache_path, "w", encoding="utf-8") as f:
-                f.write(profile_obj.model_dump_json(indent=2))
-
-            st.success(f"✅ Đã phân tích xong và lưu kết quả vào `{profile_cache_path}`!")
-        except Exception as e:
-            st.error(f"Lỗi Gemini: {e}")
-
-if st.session_state.profile:
+# TH1: ĐÃ CÓ FILE DEVELOPER_PROFILE.JSON ĐÃ LƯU
+if st.session_state.profile is not None:
     p = st.session_state.profile
+    st.success(f"💾 **Đang sử dụng hồ sơ năng lực đã lưu** (`{profile_cache_path}`). Bạn có thể dùng ngay kết quả này để tìm việc ở Bước 3!")
+    
     st.subheader(f"👤 {p.name} — {p.years_of_experience}")
-
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("**🎯 Vị trí phù hợp**")
+        st.markdown("**🎯 Vị trí phù hợp nhất:**")
         for role in p.target_roles:
-            st.markdown(f"- {role}")
-        st.markdown("**💪 Kỹ năng lõi**")
+            st.markdown(f"- **{role}**")
+        st.markdown("**💪 Kỹ năng lõi:**")
         st.code(", ".join(p.core_skills))
 
     with col2:
-        st.markdown("**✅ Thế mạnh đã chứng minh qua code**")
-        for s in p.verified_strengths:
+        st.markdown("**✅ Thế mạnh đã chứng minh qua code:**")
+        for s in p.verified_strengths[:4]:
             st.markdown(f"- {s}")
-        st.markdown("**⚠️ Cần bổ sung**")
-        for g in p.gaps_to_improve:
+        st.markdown("**⚠️ Điểm cần bổ sung/lưu ý:**")
+        for g in p.gaps_to_improve[:3]:
             st.markdown(f"- {g}")
 
-    st.info(f"📋 **Tóm tắt:** {p.overall_summary}")
+    if p.projects:
+        with st.expander(f"📁 Xem {len(p.projects)} dự án GitHub tiêu biểu đã được đưa vào hồ sơ"):
+            for prj in p.projects:
+                st.markdown(f"**🔹 {prj.name}** (`{', '.join(prj.tech_stack)}`)")
+                st.caption(f"{prj.highlights}")
+
+    st.info(f"📋 **Tóm tắt năng lực:** {p.overall_summary}")
+
+    # Cho phép người dùng mở rộng nếu muốn quét lại từ đầu
+    with st.expander("🔄 Bạn muốn quét lại GitHub & phân tích lại từ đầu? (Bấm để mở)"):
+        clean_user = github_user.strip() if github_user else ""
+        col_gh1, col_gh2 = st.columns([3, 1])
+        with col_gh1:
+            st.markdown(f"**Tài khoản GitHub:** `{clean_user or 'Chưa nhập'}`")
+        with col_gh2:
+            btn_fetch = st.button("🔄 Lấy 10 repo gần nhất", use_container_width=True)
+
+        if btn_fetch or (clean_user and not st.session_state.repo_summaries and clean_user != st.session_state.loaded_user):
+            from src.tools.github_loader import GitHubLoader
+            if clean_user:
+                with st.spinner(f"Đang tải 10 repo gần nhất của @{clean_user}..."):
+                    try:
+                        loader = GitHubLoader()
+                        st.session_state.repo_summaries = loader.get_user_recent_repos_summary(clean_user, limit=10)
+                        st.session_state.loaded_user = clean_user
+                        st.success(f"✅ Đã tìm thấy {len(st.session_state.repo_summaries)} repo gần nhất!")
+                    except Exception as e:
+                        st.error(f"Lỗi tải GitHub: {e}")
+                        st.session_state.repo_summaries = []
+
+        selected_repo_names = []
+        if st.session_state.repo_summaries:
+            st.markdown("##### 📌 Chọn các repository tâm đắc (1-5 repo):")
+            cols_grid = st.columns(2)
+            for idx, repo in enumerate(st.session_state.repo_summaries):
+                col_target = cols_grid[idx % 2]
+                with col_target:
+                    default_checked = idx < 3
+                    repo_label = f"**{repo['name']}** ({repo['language']}) — ⭐ {repo['stars']}"
+                    is_checked = st.checkbox(
+                        repo_label,
+                        value=default_checked,
+                        key=f"re_repo_chk_{repo['name']}",
+                        help=f"Mô tả: {repo['description']}\nCập nhật: {repo['updated_at']}"
+                    )
+                    st.caption(f"_{repo['description'][:80]}..._ [Xem repo]({repo['url']})")
+                    if is_checked:
+                        selected_repo_names.append(repo['name'])
+
+        if st.button("🚀 Phân tích lại & Ghi đè file JSON", type="primary", use_container_width=True):
+            from src.tools.github_loader import GitHubLoader
+            from src.agents.profile_evaluator import ProfileEvaluatorAgent
+
+            st.session_state.github_data = []
+            if clean_user and selected_repo_names:
+                with st.spinner(f"Đang đào sâu chi tiết {len(selected_repo_names)} repo..."):
+                    try:
+                        loader = GitHubLoader()
+                        owner = loader.extract_username(clean_user)
+                        st.session_state.github_data = loader.get_selected_repos_deep_dive(owner, selected_repo_names[:5])
+                    except Exception as e:
+                        st.warning(f"Lỗi đọc repo: {e}")
+
+            with st.spinner("Gemini AI đang phân tích lại..."):
+                try:
+                    evaluator = ProfileEvaluatorAgent()
+                    profile_obj = evaluator.evaluate(cv_text, st.session_state.github_data)
+                    st.session_state.profile = profile_obj
+                    with open(profile_cache_path, "w", encoding="utf-8") as f:
+                        f.write(profile_obj.model_dump_json(indent=2))
+                    st.success("✅ Đã cập nhật lại hồ sơ thành công!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Lỗi Gemini: {e}")
+
+# TH2: CHƯA CÓ FILE DEVELOPER_PROFILE.JSON (LẦN ĐẦU CHẠY)
+else:
+    st.info("Chưa có hồ sơ năng lực lưu sẵn. Vui lòng chọn các repo bên dưới và bấm phân tích để tạo hồ sơ lần đầu:")
+    clean_user = github_user.strip() if github_user else ""
+
+    col_gh1, col_gh2 = st.columns([3, 1])
+    with col_gh1:
+        st.markdown(f"**Tài khoản GitHub:** `{clean_user or 'Chưa nhập'}`")
+    with col_gh2:
+        btn_fetch = st.button("🔄 Lấy 10 repo gần nhất", use_container_width=True)
+
+    if btn_fetch or (clean_user and not st.session_state.repo_summaries and clean_user != st.session_state.loaded_user):
+        from src.tools.github_loader import GitHubLoader
+        if clean_user:
+            with st.spinner(f"Đang tải 10 repo gần nhất của @{clean_user}..."):
+                try:
+                    loader = GitHubLoader()
+                    st.session_state.repo_summaries = loader.get_user_recent_repos_summary(clean_user, limit=10)
+                    st.session_state.loaded_user = clean_user
+                    st.success(f"✅ Đã tìm thấy {len(st.session_state.repo_summaries)} repo gần nhất!")
+                except Exception as e:
+                    st.error(f"Lỗi tải GitHub: {e}")
+                    st.session_state.repo_summaries = []
+
+    selected_repo_names = []
+    if st.session_state.repo_summaries:
+        st.markdown("##### 📌 Chọn các repository bạn tâm đắc nhất (tối đa 5 repo để đưa vào CV):")
+        cols_grid = st.columns(2)
+        for idx, repo in enumerate(st.session_state.repo_summaries):
+            col_target = cols_grid[idx % 2]
+            with col_target:
+                default_checked = idx < 3
+                repo_label = f"**{repo['name']}** ({repo['language']}) — ⭐ {repo['stars']}"
+                is_checked = st.checkbox(
+                    repo_label,
+                    value=default_checked,
+                    key=f"repo_chk_{repo['name']}",
+                    help=f"Mô tả: {repo['description']}\nCập nhật: {repo['updated_at']}"
+                )
+                st.caption(f"_{repo['description'][:80]}..._ [Xem repo]({repo['url']})")
+                if is_checked:
+                    selected_repo_names.append(repo['name'])
+
+    if st.button("🔍 Đánh giá năng lực thực tế (Agent 1)", type="primary", use_container_width=True):
+        from src.tools.github_loader import GitHubLoader
+        from src.agents.profile_evaluator import ProfileEvaluatorAgent
+
+        st.session_state.github_data = []
+        if clean_user and selected_repo_names:
+            with st.spinner(f"Đang đào sâu chi tiết {len(selected_repo_names)} repo tâm đắc..."):
+                try:
+                    loader = GitHubLoader()
+                    owner = loader.extract_username(clean_user)
+                    st.session_state.github_data = loader.get_selected_repos_deep_dive(owner, selected_repo_names[:5])
+                except Exception as e:
+                    st.warning(f"Lỗi đọc repo: {e}")
+
+        with st.spinner("Gemini AI đang phân tích đối chiếu CV + Code thực tế..."):
+            try:
+                evaluator = ProfileEvaluatorAgent()
+                profile_obj = evaluator.evaluate(cv_text, st.session_state.github_data)
+                st.session_state.profile = profile_obj
+
+                # Tự động lưu ra file JSON để tái sử dụng
+                profile_cache_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(profile_cache_path, "w", encoding="utf-8") as f:
+                    f.write(profile_obj.model_dump_json(indent=2))
+
+                st.success(f"✅ Đã phân tích xong và lưu kết quả vào `{profile_cache_path}`!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Lỗi Gemini: {e}")
+
+
 
 # ── STEP 3: Tìm việc ──────────────────────────────────────────────────────────
 st.header("Bước 3 — Tìm kiếm & Đề xuất Job")
@@ -297,7 +359,7 @@ if custom_keywords.strip():
     search_keywords_list.append(custom_keywords.strip())
 final_search_query = " OR ".join([f'"{r}"' for r in search_keywords_list]) if search_keywords_list else "IT Software Engineer"
 
-num_jobs = st.slider("Số lượng job tìm tối đa:", 5, 25, 10)
+num_jobs = st.slider("Số lượng job tìm tối đa:", 3, 10, 5)
 check_company_risk = st.checkbox("🛡️ Tự động quét & cảnh báo rủi ro công ty (phốt, công ty ma, nợ lương, địa chỉ ảo)", value=True)
 
 # Khu vực tìm job tự động HOẶC paste JD thủ công

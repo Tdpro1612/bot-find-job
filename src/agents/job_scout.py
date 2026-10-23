@@ -2,6 +2,7 @@ import os
 import json
 import re
 import warnings
+import time
 warnings.filterwarnings("ignore")
 from typing import List, Dict, Any, Optional
 
@@ -276,7 +277,7 @@ class JobScoutAgent:
                 if found_alerts:
                     return (f"⚠️ Cảnh báo tìm thấy từ khóa tiêu cực ({', '.join(found_alerts)}) trên diễn đàn/mạng xã hội.", 50)
                 return ("", 100)
-
+            
             prompt = f"""
 Bạn là chuyên gia thẩm định và bảo vệ quyền lợi người tìm việc.
 Hãy phân tích các mẩu tin sau về công ty '{company_name}':
@@ -293,7 +294,8 @@ YÊU CẦU OUTPUT JSON:
   "reputation_score": điểm từ 0 đến 100 (100 là hoàn toàn sạch/uy tín, dưới 60 là có vấn đề),
   "warning": "Cảnh báo ngắn gọn về rủi ro cho ứng viên (để trống nếu uy tín)"
 }}
-"""
+"""         
+            time.sleep(4)
             resp = self.model.generate_content(prompt)
             data = json.loads(resp.text)
             if data.get("is_suspicious") or data.get("reputation_score", 100) < 70:
@@ -303,4 +305,5 @@ YÊU CẦU OUTPUT JSON:
             return ("", 100)
 
         except Exception:
+            time.sleep(10)
             return ("", 100)
